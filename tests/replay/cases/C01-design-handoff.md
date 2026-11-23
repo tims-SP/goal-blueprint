@@ -1,6 +1,6 @@
 # C01 — 设计到实施规划的交接
 
-`evidence_level: HISTORICAL-SNAPSHOT`  
+`evidence_level: HISTORICAL-SOURCE-DERIVED`  
 `snapshot_date: 2026-02-12`
 
 某设计型 Skill 的工作流程如下：
