@@ -1,0 +1,120 @@
+{
+  "model": "minimax/MiniMax-M3.1-Flash",
+  "effort": "max",
+  "cli_version": "0.7.2",
+  "source_commit": "418b2bc6a9c72e9a1a26a80a6d5090808520ae93",
+  "runs": [
+    {
+      "run": "B/C01",
+      "status": "ok",
+      "exit_code": 0,
+      "seconds": 145.5,
+      "output": "B/C01.md",
+      "log": "B/C01.log"
+    },
+    {
+      "run": "A/C01",
+      "status": "ok",
+      "exit_code": 0,
+      "seconds": 169.2,
+      "output": "A/C01.md",
+      "log": "A/C01.log"
+    },
+    {
+      "run": "A/C02",
+      "status": "ok",
+      "exit_code": 0,
+      "seconds": 113.8,
+      "output": "A/C02.md",
+      "log": "A/C02.log"
+    },
+    {
+      "run": "B/C02",
+      "status": "ok",
+      "exit_code": 0,
+      "seconds": 107.5,
+      "output": "B/C02.md",
+      "log": "B/C02.log"
+    },
+    {
+      "run": "B/C03",
+      "status": "ok",
+      "exit_code": 0,
+      "seconds": 124.8,
+      "output": "B/C03.md",
+      "log": "B/C03.log"
+    },
+    {
+      "run": "A/C03",
+      "status": "failed",
+      "exit_code": 7,
+      "seconds": 174.7,
+      "output": null,
+      "log": "attempts/A/C03.initial-failure.log",
+      "diagnostic": "\n[stderr]\nmcode exec limit_exceeded: The run reached its step limit. Increase --max-steps or narrow the task.\n"
+    },
+    {
+      "run": "A/C04",
+      "status": "ok",
+      "exit_code": 0,
+      "seconds": 104.9,
+      "output": "A/C04.md",
+      "log": "A/C04.log"
+    },
+    {
+      "run": "B/C04",
+      "status": "ok",
+      "exit_code": 0,
+      "seconds": 186.7,
+      "output": "B/C04.md",
+      "log": "B/C04.log"
+    },
+    {
+      "run": "B/C05",
+      "status": "ok",
+      "exit_code": 0,
+      "seconds": 171.8,
+      "output": "B/C05.md",
+      "log": "B/C05.log"
+    },
+    {
+      "run": "A/C05",
+      "status": "ok",
+      "exit_code": 0,
+      "seconds": 54.1,
+      "output": "A/C05.md",
+      "log": "A/C05.log"
+    },
+    {
+      "run": "A/C06",
+      "status": "ok",
+      "exit_code": 0,
+      "seconds": 163.9,
+      "output": "A/C06.md",
+      "log": "A/C06.log"
+    },
+    {
+      "run": "B/C06",
+      "status": "ok",
+      "exit_code": 0,
+      "seconds": 147.7,
+      "output": "B/C06.md",
+      "log": "B/C06.log"
+    }
+  ],
+  "retry_runs": [
+    {
+      "run": "A/C03",
+      "status": "ok",
+      "exit_code": 0,
+      "seconds": 90.2,
+      "max_steps": 3,
+      "output": "A/C03.md",
+      "log": "attempts/A/C03.retry.log",
+      "reason": "Initial attempt reached max_steps=1; retried with max_steps=3 using the same model, effort and prompt."
+    }
+  ],
+  "final_valid_outputs": "12/12",
+  "initial_batch_runtime_seconds": 1664.69,
+  "retry_runtime_seconds": 90.2
+}

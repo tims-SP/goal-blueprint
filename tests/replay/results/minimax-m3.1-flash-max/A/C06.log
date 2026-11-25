@@ -1,0 +1,131 @@
+# Design Review — C06 Media Entity Identity
+
+**Verdict: NOT_READY** — as written, the candidate model cannot express two of the four *already-confirmed* requirements. A small, well-bounded structural adjustment (splitting logical entity from file instances) resolves both; no large redesign is needed.
+
+*Review basis: the supplied spec only (`evidence_level: SYNTHETIC`). No repository, code, or external sources were inspected, per instructions.*
+
+---
+
+## Findings
+
+### B1 — Path-as-primary-key makes identity a function of location, so the move requirement has no mechanism (blocker)
+
+**Evidence:** `"数据表的主键 `media_id` 直接等于文件的绝对路径。"` combined with the confirmed feature `"从磁盘移动视频后重新扫描而保留人工元数据"`, and `"存储位置通过文件路径区分"`.
+
+**Why it matters:** Moving a file changes its absolute path, so the path *is* the identity. The next scan either (a) inserts a new media row with a new `media_id` and an empty title/description — manual metadata is orphaned or must be manually re-entered; or (b) tries to "update the key in place," which is not a key update but a delete+insert cascade across every module that references `media_id`. Because storage location is expressed *only* through the path, the model has no second place to record "this file is now at path X" while keeping the entity identity fixed. The confirmed requirement is therefore unsatisfied by construction, not merely under-specified.
+
+**Smallest proportionate correction:** Introduce a stable surrogate identity and a separate file-instance record — i.e. `media` (`media_id` = immutable opaque key; user-owned fields) + `media_file` (`file_id` PK, `media_id` FK, path/source/relative path, size/mtime/hash, state). A move becomes an `UPDATE` of a `media_file` row; `media.media_id` and all manual metadata stay untouched.
+
+---
+
+### B2 — "One media, multiple version files" is not representable (blocker)
+
+**Evidence:** Confirmed feature `"一个媒体关联多个不同版本的视频文件"` vs. `"主键 media_id 直接等于文件的绝对路径"` and `"存储位置通过文件路径区分"`.
+
+**Why it matters:** With `media_id` = path, each version file becomes its own media entity with its own PK and its own copy of title/description/user fields. There is no container to group versions, so the feature can only be delivered by duplicating metadata across version rows — which then diverges the moment a user edits one of them — or by not shipping the feature. Note the phrase "存储位置**通过文件路径区分**" indicates the schema treats a path as the *only* storage representation, i.e. the 1:N relationship has nowhere to live.
+
+**Smallest proportionate correction:** The same two-table split as B1, with `media_file` holding N rows per `media`. Additionally state, in the model, which file is the default playback source / thumbnail source, and that manual metadata is shared at the `media` level while technical metadata (resolution, codec, duration) stays per file.
+
+---
+
+### B3 — No re-association rule for "same file, new path" (major)
+
+**Evidence:** The spec defines scanning, metadata editing, and move-with-preservation, but contains no matching/identity algorithm.
+
+**Why it matters:** Even after the table split, a rescan sees an unknown path and cannot know which logical media it belongs to. The spec must fix a matching policy: (a) relocation recorded by the app when the app performs the move; (b) stable per-file identity captured at scan time (device + inode / Windows file ID); (c) content fingerprint; (d) heuristic (size + mtime) with user confirmation; (e) explicit user action ("this file was moved"). It must also define the ambiguous cases — zero candidates and multiple candidates — because those are the ones that silently corrupt metadata.
+
+**Smallest proportionate correction:** Add one normative subsection to the spec: *scan-time match order, required match evidence, and the fallback for 0 / >1 candidates.* This is the algorithmic core of the confirmed requirement and cannot be left to implementation discretion.
+
+---
+
+### M1 — No rescan-safety rule; the obvious implementation destroys manual metadata (major)
+
+**Evidence:** Absence of any statement about deletion, orphans, or source availability, combined with `"扫描多个本地存储源"` and the confirmed move workflow (a user moves files in Finder/Explorer, outside the app).
+
+**Why it matters:** The app does not observe the move. On the next scan the old path is missing and the new path is new. If the implementation does the natural thing — "drop rows whose path is gone, insert rows for new paths" — every user-edited title/description is destroyed, which is the exact opposite of the confirmed requirement. Worse, an unmounted volume, a disconnected network share, or a permission error looks identical to "user deleted the file," so a routine scan could mass-delete the entire library's metadata.
+
+**Smallest proportionate correction:** Add explicit invariants to the spec: (1) a scan never deletes `media` rows; (2) a file that disappears becomes `missing`/`unavailable` at the file level and `offline` at the media level, with metadata retained; (3) a source-level error (unmounted, unreadable) is reported as an error, never as "source empty"; (4) scans are additive and idempotent; (5) explicit metadata deletion is a user-initiated action only.
+
+---
+
+### M2 — `media_id` is an unstable, path-shaped, leaking identifier used across modules (major)
+
+**Evidence:** `"其他模块引用 `media_id` 获取媒体。"` plus the path-as-PK rule.
+
+**Why it matters:** (i) Any consumer that *persists* `media_id` — favorites, playlists, watch history, annotations, URLs/bookmarks, cross-module links — breaks on every file move, because the confirmed workflow mutates the referenced value. The spec makes the whole module graph depend on the most volatile attribute of the entity. (ii) An absolute path contains separators, drive letters, usernames and directory layout: it is awkward and unsafe as a URL path segment, forces escaping conventions, and discloses internal filesystem structure to any client. (iii) The spec states no immutability or opacity contract for `media_id` at all.
+
+**Smallest proportionate correction:** Define `media_id` in the contract as an opaque, immutable, stable identifier assigned at creation and guaranteed unchanged across renames, moves, rescans, and re-indexing; no module may parse it or derive meaning from it. Document this as an explicit interface guarantee, not an implementation detail.
+
+---
+
+### M3 — Path canonicalization and cross-source deduplication are unspecified (major)
+
+**Evidence:** `"扫描多个本地存储源"`; `"存储位置通过文件路径区分"`; PK = absolute path.
+
+**Why it matters:** One physical file can surface under two scan roots — nested/overlapping roots, a symlink and its target, a bind-mount alias, macOS `/Volumes/X` vs `/System/Volumes/Data`, a Windows UNC path vs. a drive letter, or case differences on a case-insensitive filesystem. With path as the key these become *separate* media entities with split metadata. The spec also states no normalization rule at all (absolute vs. relative, `..` segments, trailing separators, symlink resolution, case folding, Unicode NFC), so even the same file addressed two ways is "two rows" — and under a surrogate key it is equally unresolved unless you add an explicit dedupe rule.
+
+**Smallest proportionate correction:** Specify (1) the canonical form of a file reference (resolved path, symlink policy, per-filesystem case policy, Unicode normalization); (2) storage as `(source_id, relative_path)` with the source root resolved at read time — which also makes the library portable across machines; (3) a `UNIQUE` constraint on the canonical file key plus a file-level identity (device+inode or hash) used to detect "this is the same physical file" during re-scan.
+
+---
+
+### M4 — User-owned and derived metadata are not separated, and rescan ownership of fields is unstated (major)
+
+**Evidence:** `"媒体标题、描述、用户编辑字段直接挂在此主键下。"`
+
+**Why it matters:** The phrase "用户编辑字段" implicitly acknowledges a distinction the schema does not carry. Durability requirement 3 is precisely about protecting user data, yet the design places user-owned and volatile derived values (duration, resolution, codec, size, thumbnail, discovered-at, last-scanned-at) in one undifferentiated bucket with no rule about which a rescan may overwrite. Without an override marker, a later re-extraction of metadata will clobber user edits — the failure mode the requirement exists to prevent.
+
+**Smallest proportionate correction:** Split ownership explicitly: `media` = logical/user-owned fields only (title, description, tags, notes, timestamps); `media_file` = derived/technical fields (path, size, mtime, duration, codec, resolution, hash, scanned-at, state). Add the rule "a rescan updates derived fields only and never overwrites a user-edited value," and represent seeded-then-overridden fields with an explicit override flag (`title_locked` / `title_source`) rather than overwriting in place.
+
+---
+
+### M5 — The user-visible meaning of "version" is undefined (major / decision required)
+
+**Evidence:** `"一个媒体关联多个不同版本的视频文件"`.
+
+**Why it matters:** The spec states the data relationship but not the product behavior, and the two readings imply different schemas and different UX: (a) one entry with a quality/format selector (one title, one thumbnail, one default source, shared watch progress), or (b) sibling entries (separate titles, separate progress, no automatic grouping). It is also silent on whether watch progress and annotations belong to the logical media or to a particular version file. Under the current design these are not interchangeable.
+
+**Smallest proportionate correction:** State the chosen semantics explicitly and record watch progress/annotation ownership. This is a product decision, not an implementation detail (see §4).
+
+---
+
+### m1 — Absolute-path storage makes the library non-portable (minor)
+
+**Evidence:** `"主键 media_id 直接等于文件的绝对路径"`.
+
+**Why it matters:** The database cannot be relocated to another machine or OS, and the stored path embeds the current mount layout — a latent constraint that quietly forbids a common local-first workflow (moving the library folder). Resolved as a side effect of M3's `(source_id, relative_path)` recommendation; no separate work needed.
+
+### m2 — Scan failure and concurrency behavior unstated (minor)
+
+**Evidence:** No error handling or concurrency statements in the spec.
+
+**Why it matters:** Unreadable file, permission denied, source root missing at startup, or a scan running while the user edits metadata. Without rules, two plausible implementations differ (drop vs. retain the unreadable row; last-write-wins vs. clobbering a concurrent user edit).
+
+**Smallest proportionate correction:** One sentence each: scan errors are logged and the affected file is marked unreadable while prior metadata is retained, with a per-source scan summary; scans write only derived fields, and concurrent user edits win via an `updated_at`/version check.
+
+---
+
+## Already adequate — preserve as-is
+
+- **The local-first premise and the fencing of cloud sync.** `"未来云同步尚未纳入本次范围；不允许预先实现同步服务。"` is the right call and should remain hard. Importantly, the adjustment recommended above (B1/B2) is justified **entirely by already-confirmed requirements** — move-with-preservation and multi-version — so adopting it does not smuggle in sync design.
+- **Representing storage location as a filesystem path** (rather than a premature URI/remote abstraction) is appropriate for local-first; the fix is to separate it from identity, not to abstract it away.
+- **The framing of the task** — asking whether a *smaller foundational* adjustment suffices — is correct, and the answer is yes: a two-table split, not a rewrite.
+- **Scope of the confirmed feature list** is a sound basis for the model; no unconfirmed feature needs to be designed in.
+
+## Should remain out of scope
+
+- Cloud sync service, remote replicas, device registration, replication log, conflict resolution, remote metadata authority.
+- Sync-only fields (`remote_id`, `sync_state`, `device_id`, `last_synced_at`, replication queues). Adding these now is precisely what the prohibition forbids.
+- Transcoding pipelines, streaming protocol/player internals, media discovery/ML tagging, recommendation, cross-machine library identity.
+- A content fingerprint is permissible **only** as an optional derived field of the file row where the chosen move-matching policy requires it — with no sync semantics attached. If the match policy does not need it, do not add it.
+
+---
+
+## Genuine user/product decisions required
+
+1. **Version semantics and user-visible grouping** (M5): one entry with a version/quality picker, or sibling entries? Does watch progress follow the media or the file? *This changes the schema shape and cannot be inferred from the spec.*
+2. **Behavior when a moved file cannot be matched unambiguously** (B3): create a new entry, retain the old as `missing`, or prompt the user ("this looks like a moved file of X — link them?"). *A UX/data-integrity choice; a defensible default exists (match by strong evidence, otherwise prompt), but the prompt-vs-silent behavior should be confirmed.*
+3. **Whether automatic move detection is a promise to users** or only a best-effort capability. *This determines whether a fingerprint is mandatory or optional, and whether the UI must expose a manual "mark as moved" action.*
+
+Everything else in this review — table and column names, key format (UUID/ULID), hash algorithm, scan scheduling, reindex strategy, retention implementation — is a **reversible implementation detail** that does not need a decision before the spec can proceed.
+
+**Bottom line:** the current candidate model should not be handed to implementation as written. The minimum viable correction is to split logical media identity from file location (`media` + `media_file`), declare `media_id` immutable and opaque, define rescan safety invariants and the move-reassociation rule, and obtain decisions 1–3 above. No sync-related scaffolding is required for any of this.
